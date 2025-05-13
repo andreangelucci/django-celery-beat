@@ -1,6 +1,8 @@
 """Periodic Task Admin interface."""
+import inspect
 from celery import current_app
 from celery.utils import cached_property
+from celery.exceptions import NotRegistered
 from django import forms
 from django.conf import settings
 from django.contrib import admin, messages
@@ -226,27 +228,30 @@ class PeriodicTaskAdmin(admin.ModelAdmin):
     )
     def run_tasks(self, request, queryset):
         self.celery_app.loader.import_default_modules()
-        tasks = [(self.celery_app.tasks.get(task.task),
-                  loads(task.args),
-                  loads(task.kwargs),
-                  task.queue,
-                  task.name)
-                 for task in queryset]
-
-        if any(t[0] is None for t in tasks):
-            for i, t in enumerate(tasks):
-                if t[0] is None:
-                    break
-
-            # variable "i" will be set because list "tasks" is not empty
-            not_found_task_name = queryset[i].task
-
-            self.message_user(
-                request,
-                _(f'task "{not_found_task_name}" not found'),
-                level=messages.ERROR,
-            )
-            return
+        tasks = []
+        for periodic_task in queryset:
+            try:
+                task = self.celery_app.tasks[periodic_task.task]
+            except NotRegistered:
+                self.message_user(
+                    request,
+                    _(f'task "{task.task}" not found'),
+                    level=messages.ERROR,
+                )
+                return
+            args = loads(task.args) or []
+            kwargs = loads(task.kwargs) or {}
+            signature = inspect.signature(task.run)
+            try:
+                signature.bind(*args, **kwargs)
+            except TypeError:
+                self.message_user(
+                    request,
+                    _(f'task "{task.task}" with invalid arguments'),
+                    level=messages.ERROR,
+                )
+                return
+            tasks.append((task, args, kwargs, task.queue, task.name))
 
         task_ids = [
             task.apply_async(
