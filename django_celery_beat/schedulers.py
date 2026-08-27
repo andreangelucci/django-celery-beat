@@ -581,33 +581,42 @@ class DryRunDatabaseScheduler(DatabaseScheduler):
     """
     DatabaseScheduler in dry-run mode.
 
-    The Scheduler reads Periodic Tasks from the database but does not execute them,
-    only logging when they would have been triggered.
-    Useful in environments where tasks should not actually run, but the scheduler
-    must remain operational.
+    The Scheduler reads Periodic Tasks from the database but does not execute
+    them, only logging when they would have been triggered.
+
+    Useful in environments where tasks should not actually run, but the
+    scheduler must remain operational (e.g. development/staging).
+
+    Runtime state (last_run_at, total_run_count) is maintained in memory via
+    reserve() so that tasks are not re-triggered on schedule refreshes, but
+    is never persisted to the database.
     """
 
     def apply_entry(self, entry, producer=None):
+        """Log the triggered task and advance runtime state without executing.
+
+        Calls reserve() to update last_run_at and total_run_count in memory
+        and mark the entry as dirty. This ensures _refresh_schedule() preserves
+        the runtime state across periodic schedule reloads from the database.
         """
-        Overwritten method to log the triggered tasks instead of actually running them.
-        """
-        debug(
-            'Dry-run mode: Skipping task %s %s %s',
-            entry.task,
+        info(
+            'Dry-run mode: Task %s would have been sent. args=%s kwargs=%s',
+            entry.name,
             entry.args,
-            entry.kwargs
+            entry.kwargs,
         )
+        self.reserve(entry)
 
     def sync(self):
-        """
-        Override sync to avoid persisting execution metadata in dry-run mode.
+        """Skip persisting execution metadata to the database.
 
         In DatabaseScheduler, sync() saves dirty entries (including updated
-        last_run_at and total_run_count) back to the database. For a dry-run
-        scheduler this would be misleading, since tasks are never actually run.
+        last_run_at and total_run_count) back to the database. In dry-run mode,
+        tasks are never actually executed, so writing this metadata would be
+        misleading.
 
-        By overriding sync as a no-op, we ensure that dry-run operation does not
-        modify PeriodicTask records in the database while still allowing the
-        scheduler machinery to operate normally.
+        The _dirty set is intentionally left uncleared so that
+        _refresh_schedule() continues to preserve in-memory runtime state
+        when the schedule is reloaded from the database.
         """
         debug('Dry-run mode: Skipping database sync of scheduled tasks.')
