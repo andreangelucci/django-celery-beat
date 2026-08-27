@@ -1607,12 +1607,14 @@ class test_DryRunDatabaseScheduler(SchedulerCase):
 
         self.s.apply_async.assert_not_called()
 
-    def test_apply_entry_calls_reserve(self):
+    def test_tick_cycle_advances_run_metadata_in_memory(self):
+        # tick() calls reserve() (which advances state) then apply_entry().
+        # This test simulates that cycle and verifies the in-memory run
+        # metadata is advanced and the entry is marked dirty.
         entry = self.s.schedule[self.m1.name]
         original_last_run_at = entry.last_run_at
         original_total_run_count = entry.model.total_run_count
 
-        # Simulate what tick() does: reserve then apply_entry
         new_entry = self.s.reserve(entry)
         self.s.apply_entry(entry)
 
