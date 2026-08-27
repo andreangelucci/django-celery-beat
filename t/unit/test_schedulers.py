@@ -1658,7 +1658,9 @@ class test_DryRunDatabaseScheduler(SchedulerCase):
 
         # Force a full schedule refresh by backdating _last_full_sync
         self.s._last_full_sync = (
-            datetime.now() - timedelta(seconds=301)
+            datetime.now() - timedelta(
+                seconds=schedulers.SCHEDULE_SYNC_MAX_INTERVAL + 1
+            )
         )
         # Access .schedule to trigger the refresh
         refreshed_schedule = self.s.schedule
@@ -1679,7 +1681,9 @@ class test_DryRunDatabaseScheduler(SchedulerCase):
 
         # Force a full schedule refresh
         self.s._last_full_sync = (
-            datetime.now() - timedelta(seconds=301)
+            datetime.now() - timedelta(
+                seconds=schedulers.SCHEDULE_SYNC_MAX_INTERVAL + 1
+            )
         )
         refreshed_schedule = self.s.schedule
 
