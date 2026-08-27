@@ -593,12 +593,13 @@ class DryRunDatabaseScheduler(DatabaseScheduler):
     """
 
     def apply_entry(self, entry, producer=None):
-        """Log the triggered task without executing.
+        """Log the triggered task instead of executing it.
 
-        This method is called by tick() after reserve() has already advanced
-        last_run_at and total_run_count in memory and marked the entry as
-        dirty. This ensures _refresh_schedule() preserves the runtime state
-        across periodic schedule reloads from the database.
+        In dry-run mode the task is never dispatched (apply_async is not
+        called). By the time tick() calls this method, reserve() has already
+        advanced last_run_at/total_run_count in memory and marked the entry as
+        dirty; that (not this method) is what allows _refresh_schedule() to
+        preserve runtime state across schedule reloads.
         """
         info(
             'Dry-run mode: Task %s would have been sent. args=%s kwargs=%s',
