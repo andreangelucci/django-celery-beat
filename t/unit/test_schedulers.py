@@ -1612,12 +1612,13 @@ class test_DryRunDatabaseScheduler(SchedulerCase):
         original_last_run_at = entry.last_run_at
         original_total_run_count = entry.model.total_run_count
 
+        # Simulate what tick() does: reserve then apply_entry
+        new_entry = self.s.reserve(entry)
         self.s.apply_entry(entry)
 
         # reserve() should have advanced last_run_at and total_run_count
-        updated_entry = self.s.schedule[self.m1.name]
-        assert updated_entry.model.last_run_at > original_last_run_at
-        assert updated_entry.model.total_run_count == (
+        assert new_entry.model.last_run_at > original_last_run_at
+        assert new_entry.model.total_run_count == (
             original_total_run_count + 1
         )
         # Entry should be marked dirty
@@ -1629,7 +1630,8 @@ class test_DryRunDatabaseScheduler(SchedulerCase):
         original_last_run_at = entry.model.last_run_at
         original_total_run_count = entry.model.total_run_count
 
-        # Simulate a task being triggered (updates in-memory state)
+        # Simulate a full tick: reserve (advances state) + apply_entry (logs)
+        self.s.reserve(entry)
         self.s.apply_entry(entry)
         self.s.sync()
         self.m1.refresh_from_db()
@@ -1649,10 +1651,10 @@ class test_DryRunDatabaseScheduler(SchedulerCase):
         """
         entry = self.s.schedule[self.m1.name]
 
-        # Simulate the task being triggered in dry-run mode
+        # Simulate a full tick: reserve (advances state) + apply_entry (logs)
+        new_entry = self.s.reserve(entry)
         self.s.apply_entry(entry)
-        updated_entry = self.s.schedule[self.m1.name]
-        last_run_after_apply = updated_entry.model.last_run_at
+        last_run_after_apply = new_entry.model.last_run_at
 
         # Force a full schedule refresh by backdating _last_full_sync
         self.s._last_full_sync = (

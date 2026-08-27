@@ -593,11 +593,12 @@ class DryRunDatabaseScheduler(DatabaseScheduler):
     """
 
     def apply_entry(self, entry, producer=None):
-        """Log the triggered task and advance runtime state without executing.
+        """Log the triggered task without executing.
 
-        Calls reserve() to update last_run_at and total_run_count in memory
-        and mark the entry as dirty. This ensures _refresh_schedule() preserves
-        the runtime state across periodic schedule reloads from the database.
+        This method is called by tick() after reserve() has already advanced
+        last_run_at and total_run_count in memory and marked the entry as
+        dirty. This ensures _refresh_schedule() preserves the runtime state
+        across periodic schedule reloads from the database.
         """
         info(
             'Dry-run mode: Task %s would have been sent. args=%s kwargs=%s',
@@ -605,7 +606,6 @@ class DryRunDatabaseScheduler(DatabaseScheduler):
             entry.args,
             entry.kwargs,
         )
-        self.reserve(entry)
 
     def sync(self):
         """Skip persisting execution metadata to the database.
