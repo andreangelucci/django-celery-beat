@@ -1588,18 +1588,40 @@ class test_DryRunDatabaseScheduler(SchedulerCase):
 
     def test_apply_entry_logs_without_dispatching(self):
         entry = self.s.schedule[self.m1.name]
-        self.s.apply_async = MagicMock()
 
-        with patch('django_celery_beat.schedulers.debug') as mock_debug:
+        with patch('django_celery_beat.schedulers.info') as mock_info:
             self.s.apply_entry(entry)
 
-        self.s.apply_async.assert_not_called()
-        mock_debug.assert_called_once_with(
-            'Dry-run mode: Skipping task %s %s %s',
-            entry.task,
+        mock_info.assert_called_once_with(
+            'Dry-run mode: Task %s would have been sent. args=%s kwargs=%s',
+            entry.name,
             entry.args,
             entry.kwargs,
         )
+
+    def test_apply_entry_does_not_send_task(self):
+        entry = self.s.schedule[self.m1.name]
+        self.s.apply_async = MagicMock()
+
+        self.s.apply_entry(entry)
+
+        self.s.apply_async.assert_not_called()
+
+    def test_apply_entry_calls_reserve(self):
+        entry = self.s.schedule[self.m1.name]
+        original_last_run_at = entry.last_run_at
+        original_total_run_count = entry.model.total_run_count
+
+        self.s.apply_entry(entry)
+
+        # reserve() should have advanced last_run_at and total_run_count
+        updated_entry = self.s.schedule[self.m1.name]
+        assert updated_entry.model.last_run_at > original_last_run_at
+        assert updated_entry.model.total_run_count == (
+            original_total_run_count + 1
+        )
+        # Entry should be marked dirty
+        assert self.m1.name in self.s._dirty
 
     def test_sync_does_not_persist_run_metadata(self):
         entry = self.s.schedule[self.m1.name]
@@ -1607,16 +1629,59 @@ class test_DryRunDatabaseScheduler(SchedulerCase):
         original_last_run_at = entry.model.last_run_at
         original_total_run_count = entry.model.total_run_count
 
-        entry.model.last_run_at = entry.last_run_at + timedelta(hours=1)
-        entry.model.total_run_count += 1
-        self.s._dirty.add(entry.name)
-
+        # Simulate a task being triggered (updates in-memory state)
+        self.s.apply_entry(entry)
         self.s.sync()
         self.m1.refresh_from_db()
 
         assert self.s.flushed == initial_flushes + 1
+        # Database should still have the original values
         assert self.m1.last_run_at == original_last_run_at
         assert self.m1.total_run_count == original_total_run_count
+
+    def test_schedule_refresh_preserves_last_run_at(self):
+        """Regression test: schedule refresh must not reset last_run_at.
+
+        When the schedule property triggers a full reload from the DB
+        (e.g. every SCHEDULE_SYNC_MAX_INTERVAL), tasks that were "run" in
+        dry-run mode must retain their in-memory last_run_at so they don't
+        become due again immediately.
+        """
+        entry = self.s.schedule[self.m1.name]
+
+        # Simulate the task being triggered in dry-run mode
+        self.s.apply_entry(entry)
+        updated_entry = self.s.schedule[self.m1.name]
+        last_run_after_apply = updated_entry.model.last_run_at
+
+        # Force a full schedule refresh by backdating _last_full_sync
+        self.s._last_full_sync = (
+            datetime.now() - timedelta(seconds=301)
+        )
+        # Access .schedule to trigger the refresh
+        refreshed_schedule = self.s.schedule
+
+        # last_run_at should be preserved from in-memory state, not reset
+        # to the stale DB value
+        refreshed_entry = refreshed_schedule[self.m1.name]
+        assert refreshed_entry.model.last_run_at == last_run_after_apply
+
+    def test_schedule_refresh_picks_up_new_tasks(self):
+        """New tasks added to the DB should appear after a schedule refresh."""
+        m2 = self.create_model_interval(
+            schedule(timedelta(seconds=30)),
+            last_run_at=self.app.now() - timedelta(hours=1),
+        )
+        m2.save()
+        PeriodicTasks.update_changed()
+
+        # Force a full schedule refresh
+        self.s._last_full_sync = (
+            datetime.now() - timedelta(seconds=301)
+        )
+        refreshed_schedule = self.s.schedule
+
+        assert m2.name in refreshed_schedule
 
 
 @pytest.mark.django_db
